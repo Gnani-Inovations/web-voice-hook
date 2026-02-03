@@ -1,0 +1,43 @@
+{
+  "name": "@gnani/web-voice-hook",
+  "version": "0.0.0",
+  "description": "React hook for real-time bidirectional WebSocket voice (STT/TTS)",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc && node scripts/minify.mjs",
+    "typecheck": "tsc --noEmit",
+    "prepare": "pnpm run build",
+    "release:patch": "pnpm build && git add . && git commit -m \"build: v$npm_package_version\" || true && pnpm version patch && git push && git push --tags"
+  },
+  "peerDependencies": {
+    "react": ">=17.0.0",
+    "audiomotion-analyzer": ">=4.0.0"
+  },
+  "devDependencies": {
+    "terser": "^5.36.0",
+    "typescript": "5.5.3",
+    "@types/react": "^18.2.0",
+    "react": "^18.2.0",
+    "audiomotion-analyzer": "^4.2.0"
+  },
+  "keywords": [
+    "react",
+    "hook",
+    "websocket",
+    "voice",
+    "stt",
+    "tts",
+    "audio"
+  ],
+  "license": "MIT"
+}
