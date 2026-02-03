@@ -56,6 +56,10 @@ const {
 } as IUseWebVoiceOptions);
 ```
 
+**Sample Screenshot**
+
+![Screenshot or diagram](assets/screenshot.png)
+
 **Option B — Wrapper hook** (build URL from app config/auth and pass through):
 
 ```tsx
@@ -106,7 +110,6 @@ export const useWebSocketAudio = ({
 };
 ```
 
-![Screenshot or diagram](assets/screenshot.png)
 
 Then in your UI, call your wrapper (e.g. `useWebSocketAudio({ variant, agentId, onClose, ... })`) and use `connect`, `disconnect`, `startRecording`, `stopRecording`, etc.
 

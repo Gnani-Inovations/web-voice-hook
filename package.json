@@ -11,13 +11,16 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "assets",
+    "README.md"
   ],
   "scripts": {
     "build": "node scripts/embed-worklet.mjs && tsc && node scripts/minify.mjs",
     "typecheck": "node scripts/embed-worklet.mjs && tsc --noEmit",
     "prepublishOnly": "npm run build",
-    "release:patch": "pnpm build && git add . && git commit -m \"build: v$npm_package_version\" || true && pnpm version patch && git push && git push --tags"
+    "release:patch": "pnpm build && git add . && git commit -m \"build: v$npm_package_version\" || true && pnpm version patch && git push && git push --tags",
+    "release:major": "pnpm build && git add . && git commit -m \"build: v$npm_package_version\" || true && pnpm version major && git push && git push --tags"
   },
   "peerDependencies": {
     "react": ">=17.0.0",
