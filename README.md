@@ -1,12 +1,7 @@
-# GnaniWebVoiceHook
+# Web Voice Hook by Gnani.AI
 
-A **React hook** for real-time bidirectional WebSocket voice: capture microphone → server (STT), play TTS ← server. Published as `@gnani/web-voice-hook`.
+A **React hook** for real-time bidirectional WebSocket voice: capture microphone → server (STT), play TTS ← server. Published as `@gnani.ai/web-voice-hook`.
 
----
-
-## Prerequisites
-
-- **SSH key** — You need an SSH key added to your GitLab account to install from the private GitLab repo. See [GitLab: Add an SSH key](https://docs.gitlab.com/ee/user/ssh.html).
 
 ---
 
@@ -15,41 +10,30 @@ A **React hook** for real-time bidirectional WebSocket voice: capture microphone
 In your application project:
 
 ```bash
-pnpm add git+ssh://git@gitlab.com:gnani.ai/demo_platform/gnani-web-voice-hook.git#v1.0.4
+pnpm add @gnani.ai/web-voice-hook
 ```
 
 Or with npm:
 
 ```bash
-npm install git+ssh://git@gitlab.com:gnani.ai/demo_platform/gnani-web-voice-hook.git#v1.0.4
+npm install @gnani.ai/web-voice-hook
 ```
-
-Replace `#v1.0.4` with the tag/version you need (e.g. `#v1.0.2`, `#main`).
-
-**Peer dependencies** (install in your app if not already present):
-
-```bash
-pnpm add react audiomotion-analyzer
-```
-
-- **react** — required.
-- **audiomotion-analyzer** — optional; only needed if you use the visualizer.
 
 ---
 
 ## Quick start
 
-### 1. Serve the Audio Worklet
+### 1. Use the hook (no extra setup)
 
-Copy `audio-processor.js` from this package into your app’s **public** folder, e.g. `public/worklet/audio-processor.js`, so the URL `/worklet/audio-processor.js` serves that file. Or use a custom path and set `workletPath` in the hook options.
+The Audio Worklet is **embedded** in the package and loaded at runtime via a Blob URL. You don't need to copy or host any worklet file — just use the hook with the default options. If you prefer to serve the worklet yourself (e.g. custom path or base path), copy `src/audio-processor.js` from this repo into your app's public folder and pass `workletPath` in the hook options.
 
 ### 2. Use the hook
 
 **Option A — Direct use** (you build the WebSocket URL yourself):
 
 ```tsx
-import { useWebSocketAudio as useWebSocketAudioHook } from '@gnani/web-voice-hook';
-import type { IUseWebVoiceOptions } from '@gnani/web-voice-hook';
+import { useWebSocketAudio as useWebSocketAudioHook } from '@gnani.ai/web-voice-hook';
+import type { IUseWebVoiceOptions } from '@gnani.ai/web-voice-hook';
 
 const {
   isConnected,
@@ -62,7 +46,6 @@ const {
   isRecording,
 } = useWebSocketAudioHook({
   websocketUrl: 'wss://your-api/voice',
-  workletPath: '/worklet/audio-processor.js',
   visualizerOptions: { elementId: 'visualizer-canvas', color: '#9E77ED' },
   events: {
     onOpen: () => console.log('Connected'),
@@ -76,28 +59,25 @@ const {
 **Option B — Wrapper hook** (build URL from app config/auth and pass through):
 
 ```tsx
-import { useWebSocketAudio as useWebSocketAudioHook } from '@gnani/web-voice-hook';
-import type { IUseWebVoiceOptions } from '@gnani/web-voice-hook';
+import { useWebSocketAudio as useWebSocketAudioHook } from '@gnani.ai/web-voice-hook';
+import type { IUseWebVoiceOptions } from '@gnani.ai/web-voice-hook';
 import { useMemo } from 'react';
 import { v4 } from 'uuid';
 
 // Example: your app builds websocketUrl from agentId, auth, etc.
 export const useWebSocketAudio = ({
-  variant,
   agentId,
   onClose,
-  isDemoMode = false,
-  testerName,
   onConversationIdGenerated,
   visualizerColor,
+  accessToken
 }) => {
   const callId = useMemo(() => v4(), []);
-  const authToken = useGnaniAuth()?.authToken; // your auth hook
 
   const websocketUrl = useMemo(() => {
     if (!agentId) return undefined;
-    return buildVoiceWebSocketUrl(variant, agentId, callId, authToken, isDemoMode, testerName);
-  }, [variant, agentId, callId, authToken, isDemoMode, testerName]);
+    return buildVoiceWebSocketUrl(agentId, callId, accessToken);
+  }, [agentId, callId, accessToken]);
 
   onConversationIdGenerated?.(callId);
 
@@ -126,6 +106,8 @@ export const useWebSocketAudio = ({
 };
 ```
 
+![Screenshot or diagram](assets/screenshot.png)
+
 Then in your UI, call your wrapper (e.g. `useWebSocketAudio({ variant, agentId, onClose, ... })`) and use `connect`, `disconnect`, `startRecording`, `stopRecording`, etc.
 
 ---
@@ -139,7 +121,6 @@ Then in your UI, call your wrapper (e.g. `useWebSocketAudio({ variant, agentId, 
 | Option | Type | Required | Description |
 |--------|------|----------|-------------|
 | `websocketUrl` | `string` | ✅ | WebSocket URL (e.g. `wss://api.example.com/voice`). |
-| `workletPath` | `string` | No | URL for the Audio Worklet. Default: `'/worklet/audio-processor.js'`. |
 | `conversationId` | `string` | No | For your app; not sent by the hook. |
 | `visualizerOptions` | `object` | No | `elementId`, `color`, `options`. |
 | `events` | `object` | No | `onOpen`, `onClose`, `onException`. |
@@ -174,7 +155,7 @@ Consumers can then install the new tag, e.g. `#v1.0.2`.
 
 ## Troubleshooting
 
-- **“Failed to load worklet”** — Serve `audio-processor.js` at `workletPath` (e.g. under `public/worklet/`).
+- **"Failed to load worklet"** — By default the worklet is embedded (no hosting). If you pass a custom `workletPath`, ensure that URL serves the worklet script (e.g. copy `src/audio-processor.js` from this repo to your public folder).
 - **No sound / no mic** — Check mic permissions; use `events.onException` and `logger`.
 - **Visualizer not showing** — Set `visualizerOptions.elementId` to a mounted element id; install `audiomotion-analyzer`.
 
@@ -183,5 +164,5 @@ Consumers can then install the new tag, e.g. `#v1.0.2`.
 ## TypeScript
 
 ```ts
-import type { IUseWebVoiceOptions, IWebVoiceLogger, ISocketEventData, ISocketMessage } from '@gnani/web-voice-hook';
+import type { IUseWebVoiceOptions, IWebVoiceLogger, ISocketEventData, ISocketMessage } from '@gnani.ai/web-voice-hook';
 ```

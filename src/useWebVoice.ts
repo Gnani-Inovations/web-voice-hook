@@ -10,6 +10,7 @@
 import AudioMotionAnalyzer from 'audiomotion-analyzer';
 import { useCallback, useMemo, useRef, useState } from 'react';
 
+import { audioProcessorSource } from './audioProcessorSource.generated';
 import type { ISocketEventData, IUseWebVoiceOptions } from './webVoice';
 import {
   applyCustomColor,
@@ -36,8 +37,6 @@ const defaultLogger = {
     console.error('[GnaniWebVoice]', arg, ...args),
 };
 
-const DEFAULT_WORKLET_PATH = '/worklet/audio-processor.js';
-
 /**
  * React hook for bidirectional WebSocket voice: mic → server, TTS ← server.
  *
@@ -46,7 +45,7 @@ const DEFAULT_WORKLET_PATH = '/worklet/audio-processor.js';
  */
 export const useWebSocketAudio = ({
   websocketUrl,
-  workletPath = DEFAULT_WORKLET_PATH,
+  workletPath,
   visualizerOptions: {
     elementId: visualizerElementId,
     color: visualizerColor,
@@ -185,8 +184,22 @@ export const useWebSocketAudio = ({
       try {
         const audioContext = getOrCreateAudioContext();
 
-        // Load the Audio Worklet (path configurable via workletPath option)
-        await audioContext.audioWorklet.addModule(workletPath);
+        // Load the Audio Worklet: use embedded (Blob URL) when workletPath omitted, else fetch from URL
+        const useEmbedded = workletPath === undefined || workletPath === '';
+        const workletUrl = useEmbedded
+          ? URL.createObjectURL(
+              new Blob([audioProcessorSource], {
+                type: 'application/javascript',
+              })
+            )
+          : workletPath;
+        try {
+          await audioContext.audioWorklet.addModule(workletUrl);
+        } finally {
+          if (useEmbedded) {
+            URL.revokeObjectURL(workletUrl);
+          }
+        }
 
         sourceNode = audioContext.createMediaStreamSource(streamRef.current);
 

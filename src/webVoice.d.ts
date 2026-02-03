@@ -29,7 +29,7 @@ export interface IUseWebVoiceOptions {
   websocketUrl: string;
   /** Optional; used by your app for correlation (not sent by this hook). */
   conversationId?: string;
-  /** Optional; path to the Audio Worklet script. Default: '/worklet/audio-processor.js'. */
+  /** Optional; URL for the Audio Worklet. Default: embedded (no hosting). Pass a URL if you serve the worklet yourself. */
   workletPath?: string;
   visualizerOptions?: {
     /** DOM element id for the audiomotion-analyzer canvas. */
