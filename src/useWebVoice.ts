@@ -71,8 +71,11 @@ export const useWebSocketAudio = ({
   const isStopReceived = useRef(false);
   const lastSentTTSEvent = useRef(false);
   const chunkReceivedAt = useRef(0);
+  const nextPlayTimeRef = useRef(0);
+  const pendingSourcesRef = useRef(0);
 
   const analyzerRef = useRef<AudioMotionAnalyzer | null>(null);
+  const pingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [isConnected, setIsConnected] = useState(false);
   const isPlayingAudio = useRef(false);
@@ -281,12 +284,16 @@ export const useWebSocketAudio = ({
 
         audioBufferRef.current.push(rightSampled);
 
-        // Start playback if we have enough data
+         // Start playback if we have enough data
+         const totalBufferedSamples = audioBufferRef.current.reduce(
+          (acc, chunk) => acc + chunk.length,
+          0
+        );
+
         if (
-          audioBufferRef.current.reduce(
-            (acc, chunk) => acc + chunk.length,
-            0
-          ) >= bufferSize
+          totalBufferedSamples >= bufferSize ||
+          isPlayingAudio.current ||
+          (isStopReceived.current && totalBufferedSamples > 0)
         ) {
           playNextChunk();
         }
@@ -298,34 +305,81 @@ export const useWebSocketAudio = ({
   );
 
   const playNextChunk = useCallback(() => {
-    // Check if audio context exists
     const audioContext = getOrCreateAudioContext();
-    if (!audioContext || isPlayingAudio.current) return; // Prevent multiple calls
+    if (!audioContext) return;
 
-    // Declare variable to hold our audio data
-    let audioData: Float32Array;
+    const getBufferedSamples = () =>
+      audioBufferRef.current.reduce((acc, chunk) => acc + chunk.length, 0);
 
-    if (audioBufferRef.current.length === 0) {
-      isPlayingAudio.current = false;
-      setIsPlaying(false);
+    let bufferedSamples = getBufferedSamples();
+    const shouldPlayRemainder = isStopReceived.current && bufferedSamples > 0;
 
-      websocketRef.current?.send(
-        JSON.stringify({
-          event: 'TTS_PLAYING',
-          media: {
-            tts_playing: false,
-          },
-        })
+    // Ensure we have enough buffer before starting playback
+    if (
+      !isPlayingAudio.current &&
+      bufferedSamples < bufferSize &&
+      !shouldPlayRemainder
+    ) {
+      return;
+    }
+
+    while (audioBufferRef.current.length > 0) {
+      // If we are already playing, keep scheduling when we have enough data.
+      if (
+        !shouldPlayRemainder &&
+        !isPlayingAudio.current &&
+        bufferedSamples < bufferSize
+      ) {
+        break;
+      }
+
+      // Take chunks from the buffer until we have enough data
+      let totalLength = 0;
+      const chunks: Float32Array[] = [];
+
+      while (audioBufferRef.current.length > 0 && totalLength < bufferSize) {
+        const chunk = audioBufferRef.current.shift()!;
+        chunks.push(chunk);
+        totalLength += chunk.length;
+      }
+
+      if (totalLength === 0) {
+        break;
+      }
+
+      // Concatenate the chunks into a single Float32Array
+      const audioData = new Float32Array(totalLength);
+      let offset = 0;
+      for (const chunk of chunks) {
+        audioData.set(chunk, offset);
+        offset += chunk.length;
+      }
+
+      // Create a new audio buffer with our desired specifications
+      const audioBuffer = audioContext.createBuffer(
+        1,
+        audioData.length,
+        SAMPLE_RATE
       );
 
-      lastSentTTSEvent.current = false;
+      // Copy our audio data into the buffer
+      audioBuffer.getChannelData(0).set(audioData);
 
-      // Create 1 second of silence
-      const silenceLength = Math.floor(
-        backendSampleRate.current * BUFFER_DURATION * 2
+      // Create a new audio source node for playing this buffer
+      const source = audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(audioContext.destination);
+
+      // Initialize the AudioMotionAnalyzer with the AudioBufferSourceNode
+      initializeVisualizer(source);
+
+      // Schedule slightly ahead to avoid gap/tick artifacts
+      const safetyOffset = 0.02;
+      const startTime = Math.max(
+        audioContext.currentTime + safetyOffset,
+        nextPlayTimeRef.current || 0
       );
-      audioData = new Float32Array(silenceLength).fill(0);
-    } else {
+
       if (!lastSentTTSEvent.current) {
         websocketRef.current?.send(
           JSON.stringify({
@@ -338,105 +392,77 @@ export const useWebSocketAudio = ({
         lastSentTTSEvent.current = true;
       }
 
-      isPlayingAudio.current = true; // Set to true to indicate playback is in progress
+      isPlayingAudio.current = true;
       setIsPlaying(true);
-      // Take chunks from the buffer until we have enough data
-      let totalLength = 0;
-      const chunks: Float32Array[] = [];
+      pendingSourcesRef.current += 1;
 
-      while (audioBufferRef.current.length > 0 && totalLength < bufferSize) {
-        const chunk = audioBufferRef.current.shift()!;
-        chunks.push(chunk);
-        totalLength += chunk.length;
-      }
+      source.onended = () => {
+        pendingSourcesRef.current = Math.max(0, pendingSourcesRef.current - 1);
 
-      // Concatenate the chunks into a single Float32Array
-      audioData = new Float32Array(totalLength);
-      let offset = 0;
-      for (const chunk of chunks) {
-        audioData.set(chunk, offset);
-        offset += chunk.length;
-      }
-    }
+        if (
+          pendingSourcesRef.current === 0 &&
+          audioBufferRef.current.length === 0
+        ) {
+          isPlayingAudio.current = false;
+          setIsPlaying(false);
+          websocketRef.current?.send(
+            JSON.stringify({
+              event: 'TTS_PLAYING',
+              media: {
+                tts_playing: false,
+              },
+            })
+          );
+          lastSentTTSEvent.current = false;
 
-    // Create a new audio buffer with our desired specifications
-    const audioBuffer = audioContext.createBuffer(
-      1, // Change to 2 channels for stereo
-      audioData.length, // Length of our chunk
-      SAMPLE_RATE // 44100 Hz
-    );
-
-    // Copy our audio data into both channels of the newly created buffer
-    audioBuffer.getChannelData(0).set(audioData); // Left channel
-
-    // Create a new audio source node for playing this buffer
-    const source = audioContext.createBufferSource();
-    source.buffer = audioBuffer;
-    // Connect the source to the audio output
-    source.connect(audioContext.destination);
-
-    // Initialize the AudioMotionAnalyzer with the MediaStreamAudioSourceNode
-    initializeVisualizer(source);
-
-    // When this chunk finishes playing, immediately play the next one
-    source.onended = () => {
-      isPlayingAudio.current = false; // Reset playback state
-      // Check if there are more chunks to play
-      if (audioBufferRef.current.length > 0) {
-        playNextChunk(); // Play the next chunk in the queue
-      } else {
-        setIsPlaying(false); // No more audio to play
-        websocketRef.current?.send(
-          JSON.stringify({
-            event: 'TTS_PLAYING',
-            media: {
-              tts_playing: false,
-            },
-          })
-        );
-        lastSentTTSEvent.current = false;
-
-        if (isStopReceived.current) {
-          websocketRef.current?.close();
+          if (isStopReceived.current) {
+            websocketRef.current?.close();
+          }
         }
-      }
-    };
+      };
 
-    // Start playing this chunk
-    source.start();
-    // Keep track of current source node
-    sourceNodeRef.current = source;
-    // Update playing state
-    isPlayingRef.current = true;
+      source.start(startTime);
+      nextPlayTimeRef.current = startTime + audioBuffer.duration;
+      sourceNodeRef.current = source;
+      isPlayingRef.current = true;
+
+      bufferedSamples -= totalLength;
+    }
   }, [getOrCreateAudioContext, initializeVisualizer]);
 
-  const processAudioMessage = useCallback(async (message: ISocketEventData) => {
-    try {
-      if (message.event === 'media' && message.media?.payload) {
-        if (chunkReceivedAt.current === 0) {
-          chunkReceivedAt.current = Date.now();
-          logger.info('Chunk received at:', chunkReceivedAt.current);
+  const processAudioMessage = useCallback(
+    async (message: ISocketEventData) => {
+      try {
+        if (message.event === 'media' && message.media?.payload) {
+          if (chunkReceivedAt.current === 0) {
+            chunkReceivedAt.current = Date.now();
+            logger.info('Chunk received at:', chunkReceivedAt.current);
+          }
+          backendSampleRate.current = message.sample_rate ?? SAMPLE_RATE;
+          processAudioChunk(message.media.payload);
+        } else if (['barge', 'BARGE'].includes(message.event)) {
+          logger.info('Barged');
+          audioBufferRef.current = [];
+        } else if (message.event === 'EOC') {
+          logger.info('EOC event occurred');
+          websocketRef.current?.send(JSON.stringify({ event: 'EOC' }));
+        } else if (message.event === 'stop') {
+          logger.info('Stop event occurred');
+          if (websocketRef.current?.readyState === WebSocket.OPEN) {
+            isStopReceived.current = true;
+          }
+          if (audioBufferRef.current.length > 0) {
+            playNextChunk();
+          }
+        } else {
+          logger.info('Unhandled message type:', message);
         }
-        backendSampleRate.current = message.sample_rate ?? SAMPLE_RATE;
-        processAudioChunk(message.media.payload);
-      } else if (['barge', 'BARGE'].includes(message.event)) {
-        logger.info('Barged');
-        audioBufferRef.current = [];
-      } else if (message.event === 'EOC') {
-        logger.info('EOC event occurred');
-        websocketRef.current?.send(JSON.stringify({ event: 'EOC' }));
-      } else if (message.event === 'stop') {
-        logger.info('Stop event occurred');
-        if (websocketRef.current?.readyState === WebSocket.OPEN) {
-          isStopReceived.current = true;
-        }
-      } else {
-        logger.info('Unhandled message type:', message);
+      } catch (error) {
+        logger.error('Error processing audio message:', error);
       }
-    } catch (error) {
-      logger.error('Error processing audio message:', error);
-    }
-  }, []);
+    },
+    [playNextChunk, processAudioChunk]
+  );
 
   const cleanup = useCallback(
     (source: 'server' | 'client') => {
@@ -445,6 +471,12 @@ export const useWebSocketAudio = ({
 
       // Stop recording first
       stopProcessing();
+
+      // Clear ping interval
+      if (pingIntervalRef.current) {
+        clearInterval(pingIntervalRef.current);
+        pingIntervalRef.current = null;
+      }
 
       // Clean up WebSocket with additional state check
       if (websocketRef.current) {
@@ -491,6 +523,8 @@ export const useWebSocketAudio = ({
       isFirstChunk.current = true;
       isPlayingAudio.current = false;
       isStopReceived.current = false;
+      nextPlayTimeRef.current = 0;
+      pendingSourcesRef.current = 0;
       setIsPlaying(false);
 
       // Reset UI states
@@ -527,6 +561,38 @@ export const useWebSocketAudio = ({
       }
       setIsConnected(true);
 
+      websocketRef.current?.send(
+        JSON.stringify({
+          event: 'ping',
+          metadata: { timestamp: Date.now().toString() },
+        })
+      );
+
+      // Clear any existing ping interval before starting a new one
+      if (pingIntervalRef.current) {
+        clearInterval(pingIntervalRef.current);
+        pingIntervalRef.current = null;
+      }
+      // Keep connection alive with ping every 10 seconds
+      pingIntervalRef.current = setInterval(() => {
+        if (
+          isCleanedUp.current ||
+          websocketRef.current?.readyState !== WebSocket.OPEN
+        ) {
+          if (pingIntervalRef.current) {
+            clearInterval(pingIntervalRef.current);
+            pingIntervalRef.current = null;
+          }
+          return;
+        }
+        websocketRef.current?.send(
+          JSON.stringify({
+            event: 'ping',
+            metadata: { timestamp: Date.now().toString() },
+          })
+        );
+      }, 10_000);
+
       await setupAudioStream();
       await startProcessing();
       ws.send(JSON.stringify({ event: 'start' }));
@@ -545,6 +611,11 @@ export const useWebSocketAudio = ({
     };
 
     ws.onclose = (e) => {
+      if (pingIntervalRef.current) {
+        clearInterval(pingIntervalRef.current);
+        pingIntervalRef.current = null;
+      }
+
       const reason = e.reason;
       if (reason === 'LINK_EXPIRED') {
         logger.info('Link expired');
@@ -595,6 +666,8 @@ export const useWebSocketAudio = ({
       isAudioNodesConnected.current = false;
       isPlayingAudio.current = false;
       isStopReceived.current = false;
+      nextPlayTimeRef.current = 0;
+      pendingSourcesRef.current = 0;
 
       // Reset UI states
       setIsConnected(false);
@@ -654,6 +727,32 @@ export const useWebSocketAudio = ({
         }
         setIsConnected(true);
 
+
+        // Clear any existing ping interval before starting a new one
+        if (pingIntervalRef.current) {
+          clearInterval(pingIntervalRef.current);
+          pingIntervalRef.current = null;
+        }
+        // Keep connection alive with ping every 10 seconds
+        pingIntervalRef.current = setInterval(() => {
+          if (
+            isCleanedUp.current ||
+            websocketRef.current?.readyState !== WebSocket.OPEN
+          ) {
+            if (pingIntervalRef.current) {
+              clearInterval(pingIntervalRef.current);
+              pingIntervalRef.current = null;
+            }
+            return;
+          }
+          websocketRef.current?.send(
+            JSON.stringify({
+              event: 'ping',
+              metadata: { timestamp: Date.now().toString() },
+            })
+          );
+        }, 10_000);
+
         await setupAudioStream();
         await startProcessing();
         ws.send(JSON.stringify({ event: 'start' }));
@@ -674,6 +773,11 @@ export const useWebSocketAudio = ({
       };
 
       ws.onclose = (e) => {
+        if (pingIntervalRef.current) {
+          clearInterval(pingIntervalRef.current);
+          pingIntervalRef.current = null;
+        }
+
         const reason = e.reason;
         if (reason === 'LINK_EXPIRED') {
           logger.info('Link expired');
