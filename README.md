@@ -2,6 +2,7 @@
 
 A **React hook** for real-time bidirectional WebSocket voice: capture microphone → server (STT), play TTS ← server. Published as `@gnani.ai/web-voice-hook`.
 
+**We welcome community contributions** — edge cases, cleaner code, and improvements. See [Contributing](#contributing) below.
 
 ---
 
@@ -161,6 +162,15 @@ Consumers can then install the new tag, e.g. `#v1.0.2`.
 - **"Failed to load worklet"** — By default the worklet is embedded (no hosting). If you pass a custom `workletPath`, ensure that URL serves the worklet script (e.g. copy `src/audio-processor.js` from this repo to your public folder).
 - **No sound / no mic** — Check mic permissions; use `events.onException` and `logger`.
 - **Visualizer not showing** — Set `visualizerOptions.elementId` to a mounted element id; install `audiomotion-analyzer`.
+
+---
+
+## Contributing
+
+We welcome the community to improve this code: handle edge cases, simplify logic, and improve documentation.
+
+- **How to contribute:** See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup (`pnpm install`, `pnpm run build`, `pnpm run typecheck`), what we’re looking for (bugs, edge cases, cleanup, tests), and PR guidelines.
+- **Quick start:** Clone the repo, run `pnpm install` and `pnpm run build`, then open a pull request or issue.
 
 ---
 
